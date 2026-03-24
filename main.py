@@ -20,6 +20,7 @@ if sys.platform == "win32":
 
 from scrapers import threads as threads_scraper
 from scrapers import instagram as instagram_scraper
+from scrapers import x as x_scraper
 from core.downloader import download_all
 
 
@@ -32,6 +33,8 @@ def detect_platform(url: str) -> str:
         return "threads"
     if "instagram.com" in url_lower:
         return "instagram"
+    if "x.com" in url_lower or "twitter.com" in url_lower:
+        return "x"
     return "unknown"
 
 
@@ -50,9 +53,13 @@ async def main():
             await instagram_scraper.do_login()
             return
 
+        if cmd == "--login-x":
+            await x_scraper.do_login()
+            return
+
         profile_url = cmd
     else:
-        profile_url = input("請輸入個人頁面 URL（Threads 或 Instagram）：").strip()
+        profile_url = input("請輸入個人頁面 URL（Threads、Instagram 或 X）：").strip()
 
     if not profile_url:
         print("❌ 未輸入 URL，程式結束。")
@@ -105,9 +112,29 @@ async def main():
             return
         await download_all(media_list, output_dir, referer="https://www.instagram.com/")
 
+    elif platform == "x":
+        # ── X (Twitter) ────────────────────────────────────────────────────────
+        try:
+            username = x_scraper.extract_username(profile_url)
+        except ValueError as e:
+            print(f"❌ {e}")
+            return
+
+        output_dir = os.path.join("media", f"x@{username}")
+        print(f"📱 平台：X (Twitter)")
+        print(f"👤 目標帳號：@{username}")
+        print(f"📁 儲存資料夾：{output_dir}")
+        print("─" * 50)
+
+        media_list = await x_scraper.scrape_profile(profile_url)
+        if not media_list:
+            print("⚠️  未找到任何可下載的媒體，程式結束。")
+            return
+        await download_all(media_list, output_dir, referer="https://x.com/")
+
     else:
         print(f"❌ 無法辨識的平台 URL：{profile_url}")
-        print("   目前支援：threads.com、instagram.com")
+        print("   目前支援：threads.com、instagram.com、x.com、twitter.com")
         sys.exit(1)
 
 
