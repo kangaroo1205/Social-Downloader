@@ -1,70 +1,83 @@
-# Threads 媒體下載器 (Threads Media Scraper)
+# Social Media Downloader
 
-這是一個用 Python 撰寫的 Threads 媒體下載工具，可以幫助你自動化下載指定 Threads 帳號的圖片與影片。工具使用 Playwright 模擬瀏覽器行為進行滾動載入，並擷取網頁中的高畫質媒體檔案。
+這是一個用 Python 撰寫的社群媒體下載工具，支援自動辨識 **Threads** 與 **Instagram** 網址，只需輸入 URL 即可下載指定帳號的圖片與影片。
 
 ## 功能特色
-- 支援自動找尋並下載指定 Threads 帳號的圖片 (最高解析度) 與影片。
-- 自動處理多圖輪播 (Carousel) 貼文。
-- 支援「登入模式」(儲存登入 Session)，讓你能夠爬取更多貼文內容。
-- 支援非同步並行下載 (Concurrent Downloads)，提升下載速度。
-- 檔案自動以「年份_月份_日期_序號」命名整理，並集中存在專屬資料夾 (如 `media/threads@username`) 中。
+
+- 🔍 **自動分流**：自動根據 URL 網域判斷平台，無須切換腳本
+- 🖼️ 支援下載圖片（最高解析度）、影片、多圖輪播貼文
+- 🔐 支援登入模式（儲存 Session），可突破訪客瀏覽限制
+- ⚡ 非同步並行下載，速度更快
+- 📁 以 `YYYY_MM_DD_N.ext` 格式自動整理命名，儲存至對應帳號資料夾
 
 ## 環境需求
+
 - Python >= 3.13
-- 此專案使用 `uv` 進行套件管理 (也可使用標準的 `pip`)。
+- 建議使用 [uv](https://github.com/astral-sh/uv) 進行套件管理
 
 ## 安裝步驟
 
-1. 確保你已安裝 Python 3.13 以上版本，並建議安裝 [uv](https://github.com/astral-sh/uv)。
-2. 透過 uv 自動同步環境（這會自動建立虛擬環境並安裝依賴）：
-   ```bash
-   # 使用 uv 進行環境同步 (推薦)
-   uv sync
-   ```
-   *若不使用 uv，請手動建立虛擬環境並執行 `pip install httpx>=0.28.1 playwright>=1.58.0`*
+```bash
+# 1. 同步虛擬環境與依賴
+uv sync
 
-3. 安裝 Playwright 所需的瀏覽器（使用 uv 執行）：
-   ```bash
-   uv run playwright install chromium
-   ```
+# 2. 安裝 Playwright 瀏覽器
+uv run playwright install chromium
+```
 
 ## 使用方法
 
-### 透過 uv 執行 (推薦)
-使用 `uv run` 可以自動在虛擬環境中執行腳本，無需手動啟動 venv：
+### 下載媒體（自動辨識平台）
 
 ```bash
-# 執行下載
-uv run threads_scraper.py https://www.threads.com/@username
+# 下載 Instagram 帳號媒體
+uv run main.py https://www.instagram.com/username
 
-# 執行登入模式
-uv run threads_scraper.py --login
+# 下載 Threads 帳號媒體
+uv run main.py https://www.threads.com/@username
+
+# 不帶參數執行，程式會提示輸入 URL
+uv run main.py
 ```
 
-### 傳統執行方式
-若你沒有透過 `uv run`，請先確定已手動啟動虛擬環境 (.venv)，然後直接執行：
+### 登入模式（建議先執行，爬取更多內容）
+
+Instagram 與 Threads 對未登入訪客的限制較嚴格，建議首次使用前先執行登入：
 
 ```bash
-python threads_scraper.py
+# 登入 Instagram（儲存至 instagram_session.json）
+uv run main.py --login-instagram
+
+# 登入 Threads（儲存至 threads_session.json）
+uv run main.py --login-threads
 ```
-程式執行後，便會提示你輸入要爬取的網址。
 
-### 登入模式 (爬取更多內容)
-如果你發現爬取的貼文數量有限，可能是因為未登入的限制。你可以執行以下指令來進入登入模式：
+執行後會開啟瀏覽器視窗，請手動完成登入。登入成功後 session 會自動儲存，之後執行下載時便會自動帶入登入狀態。
 
-```bash
-python threads_scraper.py --login
+## 輸出資料夾
+
+| 平台 | 儲存路徑 |
+|------|---------|
+| Instagram | `media/instagram@<username>/` |
+| Threads | `media/threads@<username>/` |
+
+檔名格式：`YYYY_MM_DD_N.ext`（例：`2024_03_25_1.jpg`）
+
+## 專案結構
+
 ```
-這會開啟一個瀏覽器視窗，請手動在視窗中完成 Instagram / Threads 登入。登入完成後，程式會自動將 Session 儲存到 `threads_session.json`。之後再次執行爬蟲便會自動帶入登入狀態。
-
-## 輸出路徑
-所有下載的媒體檔案將會被分類儲存至專案目錄下的 `media/threads@<username>` 資料夾中，檔名格式為 `YYYY_MM_DD_N.ext`。
-
-## 清理與重置環境
-若後續有移除所有依賴項、重置虛擬環境的需求，專案內附有 `uninstall_deps.bat`：
-- Windows 用戶請直接**連按兩下執行 `uninstall_deps.bat`**，即可一鍵清除所有環境與快取。
-- 若需再次安裝，只需重新執行 `uv sync` 即可再次快速建置。
+Social Downloader/
+├── main.py               # 統一入口（自動分流）
+├── threads_scraper.py    # Threads 爬取模組
+├── instagram_scraper.py  # Instagram 爬取模組
+├── downloader.py         # 共用下載工具模組
+├── media/                # 下載媒體輸出目錄
+├── threads_session.json  # Threads 登入 session（登入後自動產生）
+└── instagram_session.json # Instagram 登入 session（登入後自動產生）
+```
 
 ## 注意事項
+
 - 請勿將此工具用於非法用途或侵犯他人版權。
-- 若 Threads 官方更動了網頁架構或 API 格式，此工具可能須同步更新才能繼續正常運作。
+- Instagram / Threads 若更動網頁架構或 API 格式，此工具可能須同步更新。
+- 若遇到爬取數量少的問題，請先執行登入模式（`--login-instagram` / `--login-threads`）。
