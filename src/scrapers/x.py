@@ -19,12 +19,13 @@ if sys.platform == "win32":
 from playwright.async_api import async_playwright
 
 from core.downloader import USER_AGENT
+from core.paths import get_base_dir
 
 # ── 常數 ──────────────────────────────────────────────────────────────────────
 
 SCROLL_PAUSE = 1.5          # 每次滾動後等待秒數
 MAX_NO_CHANGE = 5           # 連續無高度變化次數上限
-COOKIES_FILE = "data/x_session.json"
+COOKIES_FILE = os.path.join(get_base_dir(), "data", "x_session.json")
 
 
 # ── 工具函式 ──────────────────────────────────────────────────────────────────
@@ -36,6 +37,11 @@ def extract_username(url: str) -> str:
     if match:
         return match.group(1)
     raise ValueError(f"無法從 URL 解析使用者名稱: {url}")
+
+
+def is_post_url(url: str) -> bool:
+    """判斷 URL 是否為單一 X 貼文（含 /status/<id>）"""
+    return bool(re.search(r"(?:x\.com|twitter\.com)/[\w_]+/status/\d+", url))
 
 
 def extract_media_from_tweet(tweet: dict) -> list[dict]:
@@ -101,6 +107,89 @@ def find_tweets_in_timeline(data, results=None):
         for item in data:
             find_tweets_in_timeline(item, results)
     return results
+
+
+# ── 單一貼文爬取 ─────────────────────────────────────────────────────────────
+
+async def scrape_post(post_url: str) -> list[dict]:
+    """
+    使用 Playwright 載入單一 X.com 貼文頁面，
+    攔截 TweetDetail GraphQL 回應並萃取媒體。
+    """
+    use_session = os.path.exists(COOKIES_FILE)
+    if use_session:
+        print(f"🔑 偵測到 X.com 登入 session（{COOKIES_FILE}），將以登入狀態爬取")
+    else:
+        print("   ⚠️ 未偵測到登入 session，X.com 未登入可能無法查看任何內容（建議執行 --login-x 登入）")
+
+    print(f"🌐 開啟瀏覽器，載入貼文：{post_url}")
+    all_json_blobs: list[str] = []
+
+    async with async_playwright() as pw:
+        browser = await pw.chromium.launch(
+            headless=True,
+            args=["--disable-blink-features=AutomationControlled"]
+        )
+        context_kwargs = {
+            "user_agent": USER_AGENT,
+            "viewport": {"width": 1280, "height": 900},
+        }
+        if use_session:
+            context_kwargs["storage_state"] = COOKIES_FILE
+        context = await browser.new_context(**context_kwargs)
+        page = await context.new_page()
+        await page.add_init_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
+
+        async def handle_response(response):
+            try:
+                if "graphql" in response.url and (
+                    "TweetDetail" in response.url or "TweetResultByRestId" in response.url
+                ):
+                    ct = response.headers.get("content-type", "")
+                    if "json" in ct.lower():
+                        text = await response.text()
+                        all_json_blobs.append(text)
+            except Exception:
+                pass
+
+        page.on("response", handle_response)
+
+        try:
+            await page.goto(post_url, wait_until="domcontentloaded", timeout=60000)
+        except Exception as e:
+            print(f"⚠️  頁面載入警告（將繼續）：{e}")
+
+        # 等待 API 回應完成
+        await asyncio.sleep(3)
+        await browser.close()
+
+    print(f"📦 共攔截到 {len(all_json_blobs)} 個 GraphQL 回應，開始解析...")
+    seen_post_ids: set = set()
+    all_media: list[dict] = []
+
+    for blob in all_json_blobs:
+        try:
+            data = json.loads(blob)
+        except json.JSONDecodeError:
+            continue
+
+        tweets = find_tweets_in_timeline(data)
+        for tweet in tweets:
+            if "tweet" in tweet and "rest_id" in tweet["tweet"]:
+                t_obj = tweet["tweet"]
+            else:
+                t_obj = tweet
+
+            post_id = t_obj.get("rest_id") or t_obj.get("id_str")
+            if not post_id or post_id in seen_post_ids:
+                continue
+            seen_post_ids.add(post_id)
+
+            media = extract_media_from_tweet(t_obj)
+            all_media.extend(media)
+
+    print(f"✅ 找到 {len(all_media)} 個媒體檔案")
+    return all_media
 
 
 # ── 登入 ──────────────────────────────────────────────────────────────────────

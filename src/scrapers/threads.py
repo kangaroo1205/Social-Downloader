@@ -19,12 +19,13 @@ if sys.platform == "win32":
 from playwright.async_api import async_playwright
 
 from core.downloader import USER_AGENT, download_all  # noqa: F401（export 給 main.py 使用）
+from core.paths import get_base_dir
 
 # ── 常數 ──────────────────────────────────────────────────────────────────────
 
 SCROLL_PAUSE = 1.5          # 每次滾動後等待秒數
 MAX_NO_CHANGE = 5           # 連續無高度變化次數上限
-COOKIES_FILE = "data/threads_session.json"
+COOKIES_FILE = os.path.join(get_base_dir(), "data", "threads_session.json")
 
 
 # ── 工具函式 ──────────────────────────────────────────────────────────────────
@@ -35,6 +36,11 @@ def extract_username(url: str) -> str:
     if match:
         return match.group(1)
     raise ValueError(f"無法從 URL 解析使用者名稱: {url}")
+
+
+def is_post_url(url: str) -> bool:
+    """判斷 URL 是否為單一 Threads 貼文（含 /post/）"""
+    return "/post/" in url
 
 
 def find_thread_items(data, results=None):
@@ -109,6 +115,95 @@ def extract_media_from_post(post: dict) -> list[dict]:
             media_list.append({"url": vurl, "type": "video", "taken_at": taken_at})
 
     return media_list
+
+
+# ── 單一貼文爬取 ─────────────────────────────────────────────────────────────
+
+async def scrape_post(post_url: str) -> list[dict]:
+    """
+    使用 Playwright 載入單一 Threads 貼文頁面，
+    攔截含 thread_items 的回應並萃取媒體。
+    """
+    use_session = os.path.exists(COOKIES_FILE)
+    if use_session:
+        print(f"🔑 偵測到 Threads 登入 session（{COOKIES_FILE}），將以登入狀態爬取")
+    else:
+        print("   未偵測到登入 session，以訪客模式爬取（可執行 --login-threads 登入）")
+
+    print(f"🌐 開啟瀏覽器，載入貼文：{post_url}")
+    all_json_blobs: list[str] = []
+
+    async with async_playwright() as pw:
+        browser = await pw.chromium.launch(headless=True)
+        context_kwargs = {
+            "user_agent": USER_AGENT,
+            "viewport": {"width": 1280, "height": 900},
+        }
+        if use_session:
+            context_kwargs["storage_state"] = COOKIES_FILE
+        context = await browser.new_context(**context_kwargs)
+        page = await context.new_page()
+
+        async def handle_response(response):
+            try:
+                ct = response.headers.get("content-type", "")
+                if "json" in ct or "javascript" in ct:
+                    body = await response.body()
+                    text = body.decode("utf-8", errors="ignore")
+                    if "thread_items" in text:
+                        all_json_blobs.append(text)
+            except Exception:
+                pass
+
+        page.on("response", handle_response)
+
+        try:
+            await page.goto(post_url, wait_until="networkidle", timeout=30000)
+        except Exception as e:
+            print(f"⚠️  頁面載入警告（將繼續）：{e}")
+
+        # 從 <script data-sjs> 標籤取得靜態 JSON
+        script_contents = await page.evaluate("""
+            () => {
+                const scripts = document.querySelectorAll('script[type="application/json"][data-sjs]');
+                return Array.from(scripts).map(s => s.textContent);
+            }
+        """)
+        for content in script_contents:
+            if content and "thread_items" in content:
+                all_json_blobs.append(content)
+
+        await browser.close()
+
+    print(f"📦 共收集到 {len(all_json_blobs)} 個含貼文資料的 JSON 片段，開始解析...")
+    seen_post_ids: set = set()
+    all_media: list[dict] = []
+
+    for blob in all_json_blobs:
+        try:
+            data = json.loads(blob)
+        except json.JSONDecodeError:
+            start = min(
+                (blob.find("{") if blob.find("{") != -1 else len(blob)),
+                (blob.find("[") if blob.find("[") != -1 else len(blob)),
+            )
+            try:
+                data = json.loads(blob[start:])
+            except Exception:
+                continue
+
+        thread_items = find_thread_items(data)
+        for item in thread_items:
+            post = item.get("post", {})
+            post_id = post.get("pk") or post.get("id")
+            if not post_id or post_id in seen_post_ids:
+                continue
+            seen_post_ids.add(post_id)
+            media = extract_media_from_post(post)
+            all_media.extend(media)
+
+    print(f"✅ 找到 {len(all_media)} 個媒體檔案")
+    return all_media
 
 
 # ── 登入 ──────────────────────────────────────────────────────────────────────

@@ -1,4 +1,5 @@
 @echo off
+cd /d "%~dp0\.."
 chcp 65001 >nul
 echo 正在為您清理虛擬環境與解除安裝所有依賴項...
 

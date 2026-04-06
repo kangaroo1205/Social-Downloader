@@ -22,10 +22,11 @@ if sys.platform == "win32":
 from playwright.async_api import async_playwright
 
 from core.downloader import USER_AGENT
+from core.paths import get_base_dir
 
 # ── 常數 ──────────────────────────────────────────────────────────────────────
 
-COOKIES_FILE = "data/instagram_session.json"
+COOKIES_FILE = os.path.join(get_base_dir(), "data", "instagram_session.json")
 SCROLL_PAUSE = 2.0      # Instagram 載入較慢，等待稍長
 MAX_NO_CHANGE = 6       # 連續無高度變化次數上限
 
@@ -43,6 +44,19 @@ def extract_username(url: str) -> str:
         if candidate not in ("p", "reel", "reels", "explore", "stories", "tv"):
             return candidate
     raise ValueError(f"無法從 URL 解析使用者名稱: {url}")
+
+
+def is_post_url(url: str) -> bool:
+    """判斷 URL 是否為單一 Instagram 貼文（/p/ 或 /reel/）"""
+    return bool(re.search(r"instagram\.com/(?:p|reel)/", url))
+
+
+def extract_shortcode(url: str) -> str:
+    """從 Instagram 貼文 URL 提取 shortcode"""
+    match = re.search(r"instagram\.com/(?:p|reel)/([\w-]+)", url)
+    if match:
+        return match.group(1)
+    raise ValueError(f"無法從 URL 解析貼文 shortcode: {url}")
 
 
 def is_profile_pic_url(url: str) -> bool:
@@ -179,6 +193,87 @@ def find_media_in_json(data, seen_ids: set, results: list):
     elif isinstance(data, list):
         for item in data:
             find_media_in_json(item, seen_ids, results)
+
+
+# ── 單一貼文爬取 ─────────────────────────────────────────────────────────────
+
+async def scrape_post(post_url: str) -> list[dict]:
+    """
+    使用 Playwright 載入單一 Instagram 貼文頁面，
+    攔截含媒體資料的回應並萃取媒體。
+    """
+    use_session = os.path.exists(COOKIES_FILE)
+    if use_session:
+        print(f"🔑 偵測到 Instagram 登入 session（{COOKIES_FILE}），將以登入狀態爬取")
+    else:
+        print("   未偵測到登入 session，以訪客模式爬取")
+        print("   ⚠️  Instagram 對未登入訪客限制嚴格，建議先執行 --login-instagram")
+
+    print(f"🌐 開啟瀏覽器，載入貼文：{post_url}")
+    all_json_blobs: list[str] = []
+
+    MEDIA_KEYWORDS = (
+        "display_url", "video_url", "image_versions2",
+        "video_versions", "edge_owner_to_timeline_media",
+        "carousel_media", "shortcode",
+    )
+
+    async with async_playwright() as pw:
+        browser = await pw.chromium.launch(headless=True)
+        context_kwargs: dict = {
+            "user_agent": USER_AGENT,
+            "viewport": {"width": 1280, "height": 900},
+            "locale": "zh-TW",
+            "timezone_id": "Asia/Taipei",
+        }
+        if use_session:
+            context_kwargs["storage_state"] = COOKIES_FILE
+
+        context = await browser.new_context(**context_kwargs)
+        page = await context.new_page()
+
+        async def handle_response(response):
+            try:
+                ct = response.headers.get("content-type", "")
+                if "json" in ct or "javascript" in ct:
+                    body = await response.body()
+                    text = body.decode("utf-8", errors="ignore")
+                    if any(kw in text for kw in MEDIA_KEYWORDS):
+                        all_json_blobs.append(text)
+            except Exception:
+                pass
+
+        page.on("response", handle_response)
+
+        try:
+            await page.goto(post_url, wait_until="networkidle", timeout=30000)
+        except Exception as e:
+            print(f"⚠️  頁面載入警告（將繼續）：{e}")
+
+        await asyncio.sleep(2)
+        await browser.close()
+
+    print(f"📦 共收集到 {len(all_json_blobs)} 個含媒體資料的 JSON 片段，開始解析...")
+    seen_ids: set = set()
+    all_media: list[dict] = []
+
+    for blob in all_json_blobs:
+        try:
+            data = json.loads(blob)
+        except json.JSONDecodeError:
+            start = min(
+                (blob.find("{") if blob.find("{") != -1 else len(blob)),
+                (blob.find("[") if blob.find("[") != -1 else len(blob)),
+            )
+            try:
+                data = json.loads(blob[start:])
+            except Exception:
+                continue
+
+        find_media_in_json(data, seen_ids, all_media)
+
+    print(f"✅ 找到 {len(all_media)} 個媒體檔案")
+    return all_media
 
 
 # ── 登入 ──────────────────────────────────────────────────────────────────────
