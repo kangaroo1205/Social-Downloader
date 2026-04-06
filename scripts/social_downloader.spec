@@ -7,8 +7,8 @@ import playwright as _pw
 playwright_driver = os.path.join(os.path.dirname(_pw.__file__), "driver")
 
 a = Analysis(
-    ["src/main.py"],
-    pathex=["src"],
+    ["../src/main.py"],
+    pathex=["../src"],
     binaries=[],
     datas=[
         (playwright_driver, "playwright/driver"),

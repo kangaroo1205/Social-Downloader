@@ -54,16 +54,29 @@ uv run src/main.py --login-threads
 
 執行後會開啟瀏覽器視窗，請手動完成登入。登入成功後 session 會自動儲存，之後執行下載時便會自動帶入登入狀態。
 
-## 封裝為執行檔 (Build EXE)
+## 封裝為執行檔 (Windows Build EXE)
 
-如果你想要將程式打包成獨立的 `.exe` 檔案（方便在沒有安裝 Python 的電腦執行）：
+如果你想要將程式打包成獨立的 `.exe` 檔案：
 
 1. 進入 `scripts/` 資料夾。
-2. 點兩下執行 `build.bat`。
+2. 點兩下執行 `build.bat` 或在終端機執行 `uv run pyinstaller scripts\social_downloader.spec --clean`。
 3. 等待完成後，執行檔會產出在 `dist/SocialDownloader.exe`。
 
 > [!NOTE]
 > 打包過程會自動將 `data/` 資料夾複製到 `dist/` 目錄下，確保登入資訊可以被讀取。
+
+## macOS 使用與打包說明
+
+### 1. 直接執行原始碼 (推薦)
+
+
+### 2. 在 Mac 上打包
+若需在 Mac 上產生原生的可執行檔，請在 Mac 環境下執行：
+```bash
+uv run pyinstaller scripts/social_downloader.spec --clean
+```
+執行後會在 `dist/` 資料夾產出 Mac 專用的執行檔。
+
 
 ## 輸出資料夾
 
